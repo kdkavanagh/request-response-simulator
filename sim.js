@@ -1,11 +1,11 @@
 var USER_SPEED = "slow";
-
-var width = 1200,
+var millisPerTick = 750;
+var width = 1000,
 	height = 800,
 	padding = 1,
-	maxRadius = 3;
-radius = 5;
-globalSeqNum = 0;
+	maxRadius = 3,
+	radius = 5,
+	globalSeqNum = 0;
 // color = d3.scale.category10();
 
 var actorColors = [
@@ -23,8 +23,6 @@ var actorColors = [
 
 ];
 
-var sched_objs = [],
-	curr_minute = 0;
 
 var actors = [{
 	"index": 0,
@@ -37,7 +35,7 @@ var actors = [{
 	"index": "1",
 	"short": "Actor 2",
 	"numInFlight": 0,
-	"ticksBtwMessages": 3,
+	"ticksBtwMessages": 5,
 	"maxInFlight": 4,
 	"nextMessageAt": 0,
 }, {
@@ -51,15 +49,30 @@ var actors = [{
 	"index": "3",
 	"short": "Actor 4",
 	"numInFlight": 0,
+	"ticksBtwMessages": 7,
+	"maxInFlight": 100,
+	"nextMessageAt": 0,
+}, {
+	"index": "4",
+	"short": "Actor 5",
+	"numInFlight": 0,
 	"ticksBtwMessages": 2,
 	"maxInFlight": 100,
 	"nextMessageAt": 0,
 }];
 
 var processors = [{
-	"index": "4",
-	"short": "Processor 1",
-	"serviceTimeTicks": 2
+	"name": "Processor 1",
+	"serviceTimeTicks": 2,
+	"doneWithCurrentMessage": true
+}, {
+	"name": "Processor 2",
+	"serviceTimeTicks": 2,
+	"doneWithCurrentMessage": true
+}, {
+	"name": "Processor 3",
+	"serviceTimeTicks": 2,
+	"doneWithCurrentMessage": true
 }, ];
 
 
@@ -70,20 +83,15 @@ var speeds = {
 };
 
 // Activity to put in center of circle arrangement
-var center_pt = {
-	"x": 380,
-	"y": 365
-};
+// var center_pt = {
+// 	"x": 380,
+// 	"y": 365
+// };
 
 var inFlightMessages = [];
 var queuedMessages = [];
 var inProcessingMessages = [];
 var postProcessingMessages = [];
-
-var messageProcessed = function (agent, message) {
-	agent.numInFlight--;
-	postProcessingMessages.push(message)
-}
 
 var sendTick = function (tick, agent) {
 	if (agent.nextMessageAt === tick) {
@@ -113,36 +121,32 @@ var sendTick = function (tick, agent) {
 }
 
 var processTick = function (tick, processor) {
-	if (processor.currentMessage) {
+	if (processor.currentMessage && !processor.doneWithCurrentMessage) {
 		var msg = processor.currentMessage;
 		if (msg.processStartTick + processor.serviceTimeTicks == tick) {
 			//We're done here.
 			msg.processEndTick = tick;
-			messageProcessed(msg.sender, msg);
+			msg.sender.numInFlight--;
+			postProcessingMessages.push(msg)
 			inProcessingMessages.shift()
-			processor.currentMessage = null;
+			processor.doneWithCurrentMessage = true;
 		}
 	}
+}
 
-	if (!processor.currentMessage) {
+var acceptTick = function (tick, processor) {
+	if (processor.doneWithCurrentMessage) {
 		//We are emtpy, need to pull from the queue
 		var msg = queuedMessages.shift();
 		inProcessingMessages.push(msg)
 		msg.processStartTick = tick;
+		msg.processor = processor;
 		processor.currentMessage = msg
+		processor.doneWithCurrentMessage = false;
 	}
 }
 
-var prepareActors = function () {
-	var theta = -1 * Math.PI / (2 * (actors.length - 1));
-
-	actors.forEach(function (actor, i) {
-		actor.x = 500 * Math.cos(i * theta - 0.785) + 380,
-			actor.y = 400 * Math.sin(i * theta - 0.785) + 400
-	})
-}
-
-var prepareInflights = function () {
+var updateInFlightPositions = function (tick) {
 	inFlightMessages.forEach(function (msg) {
 		msg.color = actorColors[msg.sender.index];
 	})
@@ -150,18 +154,23 @@ var prepareInflights = function () {
 	postProcessingMessages.forEach(function (msg, i) {
 		msg.x = msg.sender.x + (actorDefaults.width / 2) + messageSize;
 		msg.y = msg.sender.y + actorDefaults.height;
+		msg.r = messageSize / 2;
 	})
 	inProcessingMessages.forEach(function (msg) {
-		msg.x = processorLoc.x + (padding.x)
-		msg.y = queue.y + queue.height / 2;
+		proc = msg.processor;
+		msg.x = proc.x + (padding.processorInnerPadding / 2) + largeMessageSize / 2
+		msg.y = proc.y + processorLoc.height / 2;
+		msg.r = largeMessageSize / 2;
+
 	})
 	queuedMessages.forEach(function (msg, i) {
 		msg.x = (queue.x + queue.width) - ((i + 1) * (padding.x + messageSize))
 		msg.y = queue.y + queue.height / 2;
+		msg.r = messageSize / 2;
 	})
 };
 
-var updateD3 = function () {
+var updateD3 = function (tick) {
 
 	plottedMsgs = svg.selectAll("circle")
 		.data(inFlightMessages, function (d) {
@@ -173,7 +182,9 @@ var updateD3 = function () {
 		})
 		.attr("cy", function (d) {
 			return d.y;
-		}).duration(1000)
+		}).attr("r", function (d) {
+			return d.r;
+		}).duration(millisPerTick)
 
 	plottedMsgs.enter()
 		.append("circle")
@@ -184,14 +195,14 @@ var updateD3 = function () {
 			return d.color;
 		})
 		.style("stroke", function (d) {
-			return d.color;
+			return "d.color";
 		})
 		.attr("cx", function (d) {
 			return d.sender.x + (actorDefaults.width / 2);
 		})
 		.attr("cy", function (d) {
 			return d.sender.y + actorDefaults.height;
-		}).transition().duration(1000).ease('linear')
+		}).transition().duration(millisPerTick).ease('linear')
 		.attr("cx", function (d, i) {
 			return queue.x - messageSize
 		})
@@ -200,38 +211,70 @@ var updateD3 = function () {
 		}).each("end", function () { // as seen above
 
 			d3.select(this). // this is the object
-			transition().duration(1000).ease('linear') // a new transition!
+			transition().duration(millisPerTick).ease('linear') // a new transition!
 				.attr("cx", function (d) {
 					return d.x
 				})
 				.attr("cy", function (d) {
 					return d.y
 				})
-
-
-			// .each("end" construct here.
+				// .each("end" construct here.
 		});
-
-
-
-
-
 	plottedMsgs.exit().transition().duration(400).style("opacity", 0).remove();
 }
 
 var handleTick = function (tick) {
-	console.log("Handling tick " + tick)
+	//console.log("Handling tick " + tick)
 	actors.forEach(function (actor, i) {
 		sendTick(tick, actor)
+	});
+
+	//Do processing work for current tick and update the progress bar,
+	//then accept a new message into the proc if we can
+	processors.forEach(function (proc, i) {
+		processTick(tick, proc);
+		console.log(proc)
+		proc.progressMeter.attr('fill', function () {
+			if (proc.currentMessage) {
+				return proc.currentMessage.color
+			} else {
+				return "white"
+			}
+		})
+		d3.transition()
+			.tween("progress", function () {
+				var work = proc.serviceTimeTicks
+				var startTime = proc.currentMessage.processStartTick;
+				var left = ((tick - startTime)) / work;
+				var oldLeft = ((tick - startTime - 1)) / work;
+				if (left == 0) {
+					//edge case
+					oldLeft = (work - 1) / work;
+					left = 1
+				}
+				var i = d3.interpolate(oldLeft, left);
+				return function (t) {
+					progress = i(t);
+					proc.progressMeter.attr("d", proc.processorArc.endAngle(2 * Math.PI * progress));
+					//text.text(formatPercent(progress));
+				};
+			});
+
+		if (proc.doneWithCurrentMessage) {
+			//Swing the progress bar back around
+			d3.transition().duration(millisPerTick)
+				.tween("progress", function () {
+					return function (t) {
+						proc.progressMeter.attr("d", proc.processorArc.endAngle(2 * Math.PI * -doneProgressI(t)));
+					};
+				});
+		}
+
+		//Accept new message into proc
+		acceptTick(tick, proc);
 	})
 
-	processors.forEach(function (proc, i) {
-			processTick(tick, proc);
-		})
-		//Expire returned message
-
-
-
+	//Expire returned message
 	$.each(inFlightMessages, function (j) {
 		if (inFlightMessages[j].processEndTick === tick - 3) {
 			inFlightMessages.splice(j, 1);
@@ -239,29 +282,9 @@ var handleTick = function (tick) {
 		}
 	});
 
-	postProcessingMessages.forEach(function (msg) {
-
-	})
-
-	prepareInflights();
-	updateD3();
+	updateInFlightPositions(tick);
+	updateD3(tick);
 }
-
-//
-// // Coordinates for activities
-// var foci = {};
-// actors.forEach(function (code, i) {
-// 	var theta = 2 * Math.PI / (actors.length - 1);
-// 	foci[code.index] = {
-// 		x: 250 * Math.cos(i * theta) + 380,
-// 		y: 250 * Math.sin(i * theta) + 365
-// 	};
-// });
-//
-// processors.forEach(function (code, i) {
-// 	foci[code.index] = center_pt;
-// });
-
 
 // Start the SVG
 var svg = d3.select("#chart").append("svg")
@@ -269,23 +292,27 @@ var svg = d3.select("#chart").append("svg")
 	.attr("height", height);
 
 var messageSize = radius * 2;
-var maxQueue = 40;
+var largeMessageSize = radius * 6 * 2;
+var maxQueue = 40 - (radius);
 var padding = {
 	x: 10,
 	y: 10,
+	processorInnerPadding: 40,
+	processorOuterPadding: 50,
 	actorPadding: 40
 }
 
 var processorLoc = {
-	x: 3 * (width - messageSize) / 4,
+	x: width / 2 - (radius),
 	y: height / 2,
-	height: messageSize + padding.y
+	height: largeMessageSize + padding.processorInnerPadding,
+	width: largeMessageSize + padding.processorInnerPadding
 };
 var qWidth = (messageSize + padding.x) * maxQueue;
 var queue = {
-	x: processorLoc.x - qWidth - messageSize,
-	y: processorLoc.y,
-	height: processorLoc.height,
+	x: 2 * messageSize,
+	y: processorLoc.y + 200,
+	height: messageSize + padding.y,
 	width: qWidth
 };
 
@@ -294,15 +321,49 @@ var actorDefaults = {
 	height: 50
 }
 
+
+
+
+var doneProgressI = d3.interpolate(1, 0);
+
+var prepareProcessor = function (proc, i) {
+	proc.x = processorLoc.x + (i * (processorLoc.width + padding.processorOuterPadding));
+	proc.y = processorLoc.y
+
+}
+processors.forEach(prepareProcessor);
+
 //processor
-svg.append("rect")
-	.attr("width", messageSize * 2)
+svg.selectAll("#procs")
+	.data(processors, function (proc) {
+		return proc.name;
+	})
+	.enter().append("rect")
+	.attr("width", processorLoc.width)
 	.attr("height", processorLoc.height)
-	.attr("x", processorLoc.x)
+	.attr("x", function (proc) {
+		return proc.x
+	})
+	.attr("y", function (proc) {
+		return proc.y
+	})
 	.attr("fill", "#F9F9F9")
 	.attr("stroke", "#CCC")
 	.attr("stroke-width", 1)
-	.attr("y", processorLoc.y);
+	.each(function (proc) {
+		proc.processorArc = d3.svg.arc()
+			.startAngle(0)
+			.innerRadius(largeMessageSize / 2 - 2) //Some padding to avoid very small gap
+			.outerRadius(largeMessageSize / 2 + 10);
+
+		proc.progressMeter = svg.append("path")
+			.attr("transform", "translate(" + (proc.x + largeMessageSize / 2 + padding.processorInnerPadding / 2) +
+				", " + (proc.y + largeMessageSize / 2 + padding.processorInnerPadding / 2) + ")")
+			.attr("opacity", 0.66);
+	});
+
+
+
 
 //queue
 svg.append("rect")
@@ -315,14 +376,20 @@ svg.append("rect")
 	.attr("y", queue.y);
 
 
-prepareActors();
+var theta = -1 * Math.PI / (2 * (actors.length - 1));
 
-actorObjs = svg.selectAll("#actors")
+var prepareActors = function (actor, i) {
+	actor.x = 500 * Math.cos(i * theta - Math.PI / 4) + 500;
+	actor.y = 500 * Math.sin(i * theta - Math.PI / 4) + 500;
+}
+actors.forEach(prepareActors);
+
+svg.selectAll("#actors")
 	.data(actors, function (d) {
 		return d.index;
 	})
-
-actorObjs.enter().append("rect")
+	.enter()
+	.append("rect")
 	.attr("width", actorDefaults.width)
 	.attr("height", actorDefaults.height)
 	.attr("x", function (d) {
@@ -335,305 +402,7 @@ actorObjs.enter().append("rect")
 		return (d.y)
 	});
 
-console.log(actorObjs)
-
-
 var curTick = 0;
 setInterval(function () {
-	if (curTick < 100) {
-		handleTick(curTick++);
-	}
-}, 1000)
-
-
-//
-//
-//
-//
-//
-// // A node for each person's schedule
-// var nodes = sched_objs.map(function (o, i) {
-// 	var act = o[0].act;
-// 	act_counts[act] += 1;
-// 	var init_x = foci[act].x + Math.random();
-// 	var init_y = foci[act].y + Math.random();
-// 	return {
-// 		act: act,
-// 		radius: 3,
-// 		x: init_x,
-// 		y: init_y,
-// 		color: color(act),
-// 		moves: 0,
-// 		next_move_time: o[0].duration,
-// 		sched: o,
-// 	}color
-// });
-//
-// var force = d3.layout.force()
-// 	.nodes(nodes)
-// 	.size([width, height])
-// 	// .links([])
-// 	.gravity(0)
-// 	.charge(0)
-// 	.friction(.9)
-// 	.on("tick", tick)
-// 	.start();
-//
-// var circle = svg.selectAll("circle")
-// 	.data(nodes)
-// 	.enter().append("circle")
-// 	.attr("r", function (d) {
-// 		return d.radius;
-// 	})
-// 	.style("fill", function (d) {
-// 		return d.color;
-// 	});
-// // .call(force.drag);
-//
-// // Activity labels
-// var label = svg.selectAll("text")
-// 	.data(actors)
-// 	.enter().append("text")
-// 	.attr("class", "actlabel")
-// 	.attr("x", function (d, i) {
-// 		if (d.desc == center_act) {
-// 			return center_pt.x;
-// 		} else {colorcolor
-// 			var theta = 2 * Math.PI / (actors.length - 1);
-// 			return 340 * Math.cos(i * theta) + 380;
-// 		}
-//
-// 	})
-// 	.attr("y", function (d, i) {
-// 		if (d.desc == center_act) {
-// 			return center_pt.y;
-// 		} else {
-// 			var theta = 2 * Math.PI / (actors.length - 1);
-// 			return 340 * Math.sin(i * theta) + 365;
-// 		}
-//
-// 	});
-//
-// label.append("tspan")
-// 	.attr("x", function () {
-// 		return d3.select(this.parentNode).attr("x");
-// 	})
-// 	// .attr("dy", "1.3em")
-// 	.attr("text-anchor", "middle")
-// 	.text(function (d) {
-// 		return d.short;
-// 	});
-// label.append("tspan")
-// 	.attr("dy", "1.3em")
-// 	.attr("x", function () {
-// 		return d3.select(this.parentNode).attr("x");
-// 	})
-// 	.attr("text-anchor", "middle")
-// 	.attr("class", "actpct")
-// 	.text(function (d) {
-// 		return act_counts[d.index] + "%";
-// 	});
-//
-//
-// // Update nodes based on activity and duration
-// function timer() {
-// 	d3.range(nodes.length).map(function (i) {
-// 		var curr_node = nodes[i],
-// 			curr_moves = curr_node.moves;
-//
-// 		// Time to go to next activity
-// 		if (curr_node.next_move_time == curr_minute) {
-// 			if (curr_node.moves == curr_node.sched.length - 1) {
-// 				curr_moves = 0;
-// 			} else {
-// 				curr_moves += 1;
-// 			}
-//
-// 			// Subtract from current activity count
-// 			act_counts[curr_node.act] -= 1;
-//
-// 			// Move on to next activity
-// 			curr_node.act = curr_node.sched[curr_moves].act;
-//
-// 			// Add to new activity count
-// 			act_counts[curr_node.act] += 1;
-//
-// 			curr_node.moves = curr_moves;
-// 			curr_node.cx = foci[curr_node.act].x;
-// 			curr_node.cy = foci[curr_node.act].y;
-//
-// 			nodes[i].next_move_time += nodes[i].sched[curr_node.moves].duration;
-// 		}
-//
-// 	});
-//
-// 	force.resume();
-// 	curr_minute += 1;
-//
-// 	// Update percentages
-// 	label.selectAll("tspan.actpct")
-// 		.text(function (d) {
-// 			return readablePercent(act_counts[d.index]);
-// 		});
-//
-// 	// Update time
-// 	var true_minute = curr_minute % 1440;
-// 	d3.select("#current_time").text(minutesToTime(true_minute));
-//
-// 	setTimeout(timer, speeds[USER_SPEED]);
-// }
-// setTimeout(timer, speeds[USER_SPEED]);
-//
-//
-//
-//
-// function tick(e) {
-// 	var k = 0.04 * e.alpha;
-//
-// 	// Push nodes toward their designated focus.
-// 	nodes.forEach(function (o, i) {
-// 		var curr_act = o.act;
-//
-// 		// Make sleep more sluggish moving.
-// 		if (curr_act == "0") {
-// 			var damper = 0.6;
-// 		} else {
-// 			var damper = 1;
-// 		}
-// 		o.color = color(curr_act);
-// 		o.y += (foci[curr_act].y - o.y) * k * damper;
-// 		o.x += (foci[curr_act].x - o.x) * k * damper;
-// 	});
-//
-// 	circle
-// 		.each(collide(.5))
-// 		.style("fill", function (d) {
-// 			return d.color;
-// 		})
-// 		.attr("cx", function (d) {
-// 			return d.x;
-// 		})
-// 		.attr("cy", function (d) {
-// 			return d.y;
-// 		});
-// }
-//
-//
-// // Resolve collisions between nodes.
-// function collide(alpha) {
-// 	var quadtree = d3.geom.quadtree(nodes);
-// 	return function (d) {
-// 		var r = d.radius + maxRadius + padding,
-// 			nx1 = d.x - r,
-// 			nx2 = d.x + r,
-// 			ny1 = d.y - r,
-// 			ny2 = d.y + r;
-// 		quadtree.visit(function (quad, x1, y1, x2, y2) {
-// 			if (quad.point && (quad.point !== d)) {
-// 				var x = d.x - quad.point.x,
-// 					y = d.y - quad.point.y,
-// 					l = Math.sqrt(x * x + y * y),
-// 					r = d.radius + quad.point.radius + (d.act !== quad.point.act) * padding;
-// 				if (l < r) {
-// 					l = (l - r) / l * alpha;
-// 					d.x -= x *= l;
-// 					d.y -= y *= l;
-// 					quad.point.x += x;
-// 					quad.point.y += y;
-// 				}
-// 			}
-// 			return x1 > nx2 || x2 < nx1 || y1 > ny2 || y2 < ny1;
-// 		});
-// 	};
-// }
-//
-//
-//
-//
-// // Speed toggle
-// d3.selectAll(".togglebutton")
-// 	.on("click", function () {
-// 		if (d3.select(this).attr("data-val") == "slow") {
-// 			d3.select(".slow").classed("current", true);
-// 			d3.select(".medium").classed("current", false);
-// 			d3.select(".fast").classed("current", false);
-// 		} else if (d3.select(this).attr("data-val") == "medium") {
-// 			d3.select(".slow").classed("current", false);
-// 			d3.select(".medium").classed("current", true);
-// 			d3.select(".fast").classed("current", false);
-// 		} else {
-// 			d3.select(".slow").classed("current", false);
-// 			d3.select(".medium").classed("current", false);
-// 			d3.select(".fast").classed("current", true);
-// 		}
-//
-// 		USER_SPEED = d3.select(this).attr("data-val");
-// 	});
-//
-//
-//
-// function color(activity) {
-//
-// 	var colorByActivity = {
-// 		"0": "#e0d400",
-// 		"1": "#1c8af9",
-// 		"2": "#51BC05",
-// 		"3": "#FF7F00",
-// 		"4": "#DB32A4",
-// 		"5": "#00CDF8",
-// 		"6": "#E63B60",
-// 		"7": "#8E5649",
-// 		"8": "#68c99e",
-// 		"9": "#a477c8",
-// 		"10": "#5C76EC",
-// 		"11": "#E773C3",
-// 		"12": "#799fd2",
-// 		"13": "#038a6c",
-// 		"14": "#cc87fa",
-// 		"15": "#ee8e76",
-// 		"16": "#bbbbbb",
-// 	}
-//
-// 	return colorByActivity[activity];
-//
-// }
-//
-//
-//
-// // Output readable percent based on count.
-// function readablePercent(n) {
-//
-// 	var pct = 100 * n / 1000;
-// 	if (pct < 1 && pct > 0) {
-// 		pct = "<1%";
-// 	} else {
-// 		pct = Math.round(pct) + "%";
-// 	}
-//
-// 	return pct;
-// }
-//
-//
-// // Minutes to time of day. Data is minutes from 4am.
-// function minutesToTime(m) {
-// 	var minutes = (m + 4 * 60) % 1440;
-// 	var hh = Math.floor(minutes / 60);
-// 	var ampm;
-// 	if (hh > 12) {
-// 		hh = hh - 12;
-// 		ampm = "pm";
-// 	} else if (hh == 12) {
-// 		ampm = "pm";
-// 	} else if (hh == 0) {
-// 		hh = 12;
-// 		ampm = "am";
-// 	} else {
-// 		ampm = "am";
-// 	}
-// 	var mm = minutes % 60;
-// 	if (mm < 10) {
-// 		mm = "0" + mm;
-// 	}
-//
-// 	return hh + ":" + mm + ampm
-// }
+	handleTick(curTick++);
+}, millisPerTick)
