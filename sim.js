@@ -241,7 +241,7 @@ var handleTick = function (tick) {
 				return "white"
 			}
 		})
-		d3.transition()
+		proc.progressMeter.transition()
 			.tween("progress", function () {
 				var work = proc.serviceTimeTicks
 				var startTime = proc.currentMessage.processStartTick;
@@ -262,7 +262,7 @@ var handleTick = function (tick) {
 
 		if (proc.doneWithCurrentMessage) {
 			//Swing the progress bar back around
-			d3.transition().duration(millisPerTick)
+			proc.progressMeter.transition().duration(millisPerTick)
 				.tween("progress", function () {
 					return function (t) {
 						proc.progressMeter.attr("d", proc.processorArc.endAngle(2 * Math.PI * -doneProgressI(t)));
