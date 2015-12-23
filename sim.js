@@ -1,7 +1,7 @@
 var USER_SPEED = "slow";
 var millisPerTick = 750;
 
-var NUM_ACTORS = 2;
+var NUM_ACTORS = 4;
 var NUM_PROCESSORS = 3;
 
 var width = 1000,
@@ -163,7 +163,9 @@ var updateD3 = function () {
 		})
 		.attr("cy", function (d) {
 			return d.sender.y + actorDefaults.height;
-		}).transition().duration(millisPerTick).ease('linear')
+		}).transition()
+		.duration(millisPerTick)
+		.ease('linear')
 		.attr("cx", function (d, i) {
 			return queue.x - messageSize;
 		})
@@ -178,6 +180,8 @@ var updateD3 = function () {
 				})
 				.attr("cy", function (d) {
 					return d.y;
+				}).attr("r", function (d) {
+					return d.r;
 				});
 			// .each("end" construct here.
 		});
@@ -204,7 +208,7 @@ var handleTick = function (tick) {
 
 
 		if (proc.currentMessage) {
-			var msg = proc.currentMessage
+			var msg = proc.currentMessage;
 			proc.progressMeter.transition()
 				.tween("progress", function () {
 					var work = proc.serviceTimeTicks;
