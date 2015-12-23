@@ -1,8 +1,8 @@
 var USER_SPEED = "slow";
 var millisPerTick = 750;
 
-var NUM_ACTORS = 4;
-var NUM_PROCESSORS = 3;
+var NUM_ACTORS = 6;
+var NUM_PROCESSORS = 4;
 
 var width = 1000,
 	height = 800,
@@ -26,6 +26,15 @@ var ACTOR_COLORS = [
 	"#5C76EC",
 
 ];
+
+d3.selection.prototype.moveToBack = function () {
+	return this.each(function () {
+		var firstChild = this.parentNode.firstChild;
+		if (firstChild) {
+			this.parentNode.insertBefore(this, firstChild);
+		}
+	});
+};
 
 var actors = [];
 var processors = [];
@@ -124,6 +133,7 @@ var updateInFlightPositions = function (tick) {
 		msg.r = largeMessageSize / 2;
 
 	});
+
 	queuedMessages.forEach(function (msg, i) {
 		msg.x = (queue.x + queue.width) - ((i + 1) * (padding.x + messageSize));
 		msg.y = queue.y + queue.height / 2;
@@ -133,7 +143,7 @@ var updateInFlightPositions = function (tick) {
 
 var updateD3 = function () {
 
-	plottedMsgs = svg.selectAll("circle")
+	plottedMsgs = messageGroup.selectAll("circle")
 		.data(inFlightMessages, function (d) {
 			return d.msgId;
 		});
@@ -259,6 +269,10 @@ var svg = d3.select("#chart").append("svg")
 	.attr("width", width)
 	.attr("height", height);
 
+var processorGroup = svg.append('g').attr('id', 'processorGroup');
+var actorGroup = svg.append('g').attr('id', 'actorGroup');
+var messageGroup = svg.append('g').attr('id', 'messageGroup');
+
 var messageSize = radius * 2;
 var largeMessageSize = radius * 6 * 2;
 var maxQueue = 40 - (radius);
@@ -293,20 +307,23 @@ var addProcessor = function () {
 	var num = processors.length + 1;
 	processors.push({
 		"name": "Processor " + num,
-		"serviceTimeTicks": 2,
+		"serviceTimeTicks": 7,
 		"doneWithCurrentMessage": true
 	});
+	processorLoc.x = (width / 2) - (processorLoc.width * processors.length / 2);
 	processors.forEach(function (proc, i) {
 		proc.x = processorLoc.x + (i * (processorLoc.width + padding.processorOuterPadding));
 		proc.y = processorLoc.y;
 	});
 
 	//processor
-	var rects = svg.selectAll("#procs")
+	var rects = processorGroup.selectAll(".procs")
 		.data(processors, function (proc) {
 			return proc.name;
-		})
-		.enter().append("rect")
+		});
+	//On new processor creation
+	rects.enter().append("rect")
+		.attr("class", "procs")
 		.attr("width", processorLoc.width)
 		.attr("height", processorLoc.height)
 		.attr("fill", "#F9F9F9")
@@ -340,10 +357,8 @@ for (i = 0; i < NUM_PROCESSORS; i++) {
 	addProcessor();
 }
 
-
-
 //queue
-svg.append("rect")
+processorGroup.append("rect")
 	.attr("width", queue.width)
 	.attr("height", queue.height)
 	.attr("x", queue.x)
@@ -351,7 +366,6 @@ svg.append("rect")
 	.attr("stroke", "#CCC")
 	.attr("stroke-width", 1)
 	.attr("y", queue.y);
-
 
 var addActor = function () {
 	var num = actors.length;
@@ -370,18 +384,27 @@ var addActor = function () {
 		actor.x = 500 * Math.cos(i * theta - Math.PI / 4) + 500;
 		actor.y = 500 * Math.sin(i * theta - Math.PI / 4) + 500;
 	});
-	acts = svg.selectAll("#actors")
+	acts = actorGroup.selectAll(".actors")
 		.data(actors, function (d) {
-			return d.name;
-		})
-		.enter()
+			return d.index;
+		});
+	//On new actor creation
+	acts.enter()
 		.append("rect")
+		.attr("class", "actors")
 		.attr("width", actorDefaults.width)
 		.attr("height", actorDefaults.height)
-		.attr("fill", "#F9F9F9")
-		.attr("stroke", "#CCC")
-		.attr("stroke-width", 1);
-
+		.attr("rx", 3)
+		.attr("ry", 3)
+		.attr("fill", function (d) {
+			return ACTOR_COLORS[d.index];
+		}) //"#F9F9F9")
+		.attr("fill-opacity", 0.2)
+		.attr("stroke", function (d) {
+			return ACTOR_COLORS[d.index];
+		}).attr("stroke-opacity", 0.75) //"#CCC")
+		.attr("stroke-width", 3)
+		.moveToBack();
 
 	acts.transition().attr("y", function (d) {
 		return (d.y);
@@ -399,3 +422,11 @@ var curTick = 0;
 setInterval(function () {
 	handleTick(curTick++);
 }, millisPerTick);
+
+setTimeout(function () {
+	addActor();
+}, 5000);
+
+setTimeout(function () {
+	addProcessor();
+}, 10000);
