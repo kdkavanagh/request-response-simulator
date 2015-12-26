@@ -1,7 +1,7 @@
 var USER_SPEED = "slow";
 var millisPerTick = 750;
 
-var NUM_ACTORS = 6;
+var NUM_PRODUCERS = 6;
 var NUM_PROCESSORS = 4;
 
 var width = 1000,
@@ -12,7 +12,7 @@ var width = 1000,
 	globalSeqNum = 0;
 // color = d3.scale.category10();
 var doneProgressI = d3.interpolate(1, 0);
-var ACTOR_COLORS = [
+var PRODUCER_COLORS = [
 	"#e0d400",
 	"#1c8af9",
 	"#51BC05",
@@ -27,16 +27,7 @@ var ACTOR_COLORS = [
 
 ];
 
-d3.selection.prototype.moveToBack = function () {
-	return this.each(function () {
-		var firstChild = this.parentNode.firstChild;
-		if (firstChild) {
-			this.parentNode.insertBefore(this, firstChild);
-		}
-	});
-};
-
-var actors = [];
+var producers = [];
 var processors = [];
 var speeds = {
 	"slow": 1000,
@@ -55,30 +46,30 @@ var queuedMessages = [];
 var inProcessingMessages = [];
 var postProcessingMessages = [];
 
-var sendTick = function (tick, agent) {
-	if (agent.nextMessageAt === tick) {
+var sendTick = function (tick, producer) {
+	if (!producer.nextMessageAt || producer.nextMessageAt === tick) {
 		//Need to see if we should send a message now
-		if (agent.numInFlight < agent.maxInFlight) {
+		if (producer.numInFlight < producer.maxInFlight) {
 			//We are go to send
-			if (!agent.sentMsgs) {
-				agent.sentMsgs = 0;
+			if (!producer.sentMsgs) {
+				producer.sentMsgs = 0;
 			}
-			agent.sentMsgs++;
+			producer.sentMsgs++;
 			var msg = {
 				msgId: globalSeqNum++,
-				sender: agent,
+				sender: producer,
 				sendTime: tick,
-				color: ACTOR_COLORS[agent.index]
+				color: PRODUCER_COLORS[producer.index]
 			};
 			inFlightMessages.push(msg);
 			queuedMessages.push(msg);
-			agent.nextMessageAt += agent.ticksBtwMessages;
-			agent.delay = 0;
-			agent.numInFlight++;
+			producer.nextMessageAt += producer.ticksBtwMessages;
+			producer.delay = 0;
+			producer.numInFlight++;
 		} else {
 			//We cant send a mesage now
-			agent.nextMessageAt++;
-			agent.delay++;
+			producer.nextMessageAt++;
+			producer.delay++;
 		}
 	}
 };
@@ -119,11 +110,11 @@ var acceptTick = function (tick, processor) {
 
 };
 
-var updateInFlightPositions = function (tick) {
+var updateInFlightPositions = function () {
 
 	postProcessingMessages.forEach(function (msg, i) {
-		msg.x = msg.sender.x + (actorDefaults.width / 2) + messageSize;
-		msg.y = msg.sender.y + actorDefaults.height;
+		msg.x = msg.sender.x + (producerDefaults.width / 2) + messageSize;
+		msg.y = msg.sender.y + producerDefaults.height;
 		msg.r = messageSize / 2;
 	});
 	inProcessingMessages.forEach(function (msg) {
@@ -169,18 +160,20 @@ var updateD3 = function () {
 			return "d.color";
 		})
 		.attr("cx", function (d) {
-			return d.sender.x + (actorDefaults.width / 2);
+			return d.sender.x + (producerDefaults.width / 2);
 		})
 		.attr("cy", function (d) {
-			return d.sender.y + actorDefaults.height;
+			return d.sender.y + producerDefaults.height;
 		}).transition()
 		.duration(millisPerTick)
 		.ease('linear')
+		//Move to the start of the queue
 		.attr("cx", function (d, i) {
 			return queue.x - messageSize;
 		})
 		.attr("cy", function (d) {
 			return d.y;
+			//Move to the right position in the queue
 		}).each("end", function () { // as seen above
 
 			d3.select(this). // this is the object
@@ -200,14 +193,13 @@ var updateD3 = function () {
 
 var handleTick = function (tick) {
 	//console.log("Handling tick " + tick)
-	actors.forEach(function (actor, i) {
-		sendTick(tick, actor);
+	producers.forEach(function (producer, i) {
+		sendTick(tick, producer);
 	});
 
 	//Do processing work for current tick and update the progress bar,
 	//the		if (proc.currentMessage) {n accept a new message into the proc if we can
 	processors.forEach(function (proc, i) {
-
 		proc.progressMeter.attr('fill', function () {
 			if (proc.currentMessage) {
 				return proc.currentMessage.color;
@@ -215,7 +207,6 @@ var handleTick = function (tick) {
 				return "white";
 			}
 		});
-
 
 		if (proc.currentMessage) {
 			var msg = proc.currentMessage;
@@ -239,28 +230,25 @@ var handleTick = function (tick) {
 				});
 		}
 
-
 		//Accept new message into proc
 		acceptTick(tick, proc);
-
 	});
 
 	//Expire returned message
-	var expire = tick - 3;
-	$.each(inFlightMessages, function (j) {
-		if (inFlightMessages[j].processEndTick === expire) {
+	var expire = tick - 2;
+	for (var j = inFlightMessages.length - 1; j >= 0; j--) {
+		if (inFlightMessages[j].processEndTick && inFlightMessages[j].processEndTick === expire) {
 			inFlightMessages.splice(j, 1);
-			return false;
 		}
-	});
-	$.each(postProcessingMessages, function (j) {
-		if (postProcessingMessages[j].processEndTick === expire) {
+	}
+	for (var j = postProcessingMessages.length - 1; j >= 0; j--) {
+		if (postProcessingMessages[j].processEndTick && postProcessingMessages[j].processEndTick === expire) {
 			postProcessingMessages.splice(j, 1);
-			return false;
-		}
-	});
 
-	updateInFlightPositions(tick);
+		}
+	}
+
+	updateInFlightPositions();
 	updateD3();
 };
 
@@ -270,7 +258,7 @@ var svg = d3.select("#chart").append("svg")
 	.attr("height", height);
 
 var processorGroup = svg.append('g').attr('id', 'processorGroup');
-var actorGroup = svg.append('g').attr('id', 'actorGroup');
+var producerGroup = svg.append('g').attr('id', 'producerGroup');
 var messageGroup = svg.append('g').attr('id', 'messageGroup');
 
 var messageSize = radius * 2;
@@ -281,7 +269,7 @@ var padding = {
 	y: 10,
 	processorInnerPadding: 40,
 	processorOuterPadding: 50,
-	actorPadding: 40
+	producerPadding: 40
 };
 
 var processorLoc = {
@@ -298,7 +286,7 @@ var queue = {
 	width: qWidth
 };
 
-var actorDefaults = {
+var producerDefaults = {
 	width: 100,
 	height: 50
 };
@@ -307,8 +295,7 @@ var addProcessor = function () {
 	var num = processors.length + 1;
 	processors.push({
 		"name": "Processor " + num,
-		"serviceTimeTicks": 7,
-		"doneWithCurrentMessage": true
+		"serviceTimeTicks": 7
 	});
 	processorLoc.x = (width / 2) - (processorLoc.width * processors.length / 2);
 	processors.forEach(function (proc, i) {
@@ -352,6 +339,8 @@ var addProcessor = function () {
 				.attr("transform", "translate(" + (proc.x + largeMessageSize / 2 + padding.processorInnerPadding / 2) +
 					", " + (proc.y + largeMessageSize / 2 + padding.processorInnerPadding / 2) + ")");
 		});
+
+
 };
 for (i = 0; i < NUM_PROCESSORS; i++) {
 	addProcessor();
@@ -368,43 +357,41 @@ processorGroup.append("rect")
 	.attr("y", queue.y);
 
 var addActor = function () {
-	var num = actors.length;
-	actors.push({
+	var num = producers.length;
+	producers.push({
 		"index": num,
-		"name": "Actor " + num + 1,
+		"name": "Actor " + (num + 1),
 		"numInFlight": 0,
 		"ticksBtwMessages": 3,
-		"maxInFlight": 4,
-		"nextMessageAt": 0,
+		"maxInFlight": 4
 	});
 
-	var theta = actors.length > 1 ? -1 * Math.PI / (2 * (actors.length - 1)) : 0;
+	var theta = producers.length > 1 ? -1 * Math.PI / (2 * (producers.length - 1)) : 0;
 
-	actors.forEach(function (actor, i) {
-		actor.x = 500 * Math.cos(i * theta - Math.PI / 4) + 500;
-		actor.y = 500 * Math.sin(i * theta - Math.PI / 4) + 500;
+	producers.forEach(function (producer, i) {
+		producer.x = 500 * Math.cos(i * theta - Math.PI / 4) + 500;
+		producer.y = 500 * Math.sin(i * theta - Math.PI / 4) + 500;
 	});
-	acts = actorGroup.selectAll(".actors")
-		.data(actors, function (d) {
+	acts = producerGroup.selectAll(".producers")
+		.data(producers, function (d) {
 			return d.index;
 		});
-	//On new actor creation
+	//On new producer creation
 	acts.enter()
 		.append("rect")
-		.attr("class", "actors")
-		.attr("width", actorDefaults.width)
-		.attr("height", actorDefaults.height)
+		.attr("class", "producers")
+		.attr("width", producerDefaults.width)
+		.attr("height", producerDefaults.height)
 		.attr("rx", 3)
 		.attr("ry", 3)
 		.attr("fill", function (d) {
-			return ACTOR_COLORS[d.index];
+			return PRODUCER_COLORS[d.index];
 		}) //"#F9F9F9")
 		.attr("fill-opacity", 0.2)
 		.attr("stroke", function (d) {
-			return ACTOR_COLORS[d.index];
+			return PRODUCER_COLORS[d.index];
 		}).attr("stroke-opacity", 0.75) //"#CCC")
-		.attr("stroke-width", 3)
-		.moveToBack();
+		.attr("stroke-width", 3);
 
 	acts.transition().attr("y", function (d) {
 		return (d.y);
@@ -413,7 +400,7 @@ var addActor = function () {
 	});
 };
 
-for (i = 0; i < NUM_ACTORS; i++) {
+for (i = 0; i < NUM_PRODUCERS; i++) {
 	addActor();
 }
 
@@ -423,10 +410,15 @@ setInterval(function () {
 	handleTick(curTick++);
 }, millisPerTick);
 
+
 setTimeout(function () {
 	addActor();
 }, 5000);
 
 setTimeout(function () {
-	addProcessor();
+	addActor();
 }, 10000);
+
+setTimeout(function () {
+	addProcessor();
+}, 5000);
